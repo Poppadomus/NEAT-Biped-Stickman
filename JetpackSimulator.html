@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>NEAT Jetpack Stickman – Pedestal Landing</title>
+<title>NEAT Jetpack Stickman</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/neataptic/1.4.7/neataptic.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;600&display=swap');
@@ -26,7 +26,7 @@
 </head>
 <body>
 <div id="header">
-  <h1>NEAT // JETPACK STICKMAN ×24 – PEDESTAL LANDING</h1>
+  <h1>NEAT // JETPACK STICKMAN ×24</h1>
   <div class="stat"><span class="stat-label">Speed</span><span class="stat-value" id="spd">1x</span></div>
 </div>
 <div id="grid"></div>
@@ -68,9 +68,6 @@ var MAX_JOINT_VEL = 0.18;
 var JET_MAX_FORCE = 0.30;
 var JET_TURN_RATE = 0.08;
 var JET_DAMPING   = 0.992;
-
-var PEDESTAL_W = 80;
-var PEDESTAL_H = 52;
 
 var HIP_MIN   = -0.6;   var HIP_MAX   = 1.1;
 var KNEE_MIN  =  0.05;  var KNEE_MAX  = 1.4;
@@ -138,7 +135,6 @@ Stickman.prototype.reset = function() {
   this.jetThrottle = 0;
   this.jetTilt = 0;
   this.jetFlame = 0;
-  this.hasLanded = false;
 
   for (let settle = 0; settle < 40; settle++) {
     this.hy += 0.18;
@@ -241,9 +237,6 @@ Stickman.prototype.step = function() {
   var lFootOnGnd = p.lFoot.y >= GY - 2;
   var rFootOnGnd = p.rFoot.y >= GY - 2;
 
-  var ped = s.getPedestal();
-  var targetX = ped.x + ped.w * 0.5;
-  var targetY = ped.y;
   var standingHeight = GY - 65;
   var inputs = [
     Math.max(-1.5, Math.min(1.5, (this.hy - standingHeight) / 40)),
@@ -257,8 +250,6 @@ Stickman.prototype.step = function() {
     (GY - this.hy) / 120,
     this.jetThrottle,
     this.jetTilt,
-    (targetX - this.hx) / 220,
-    (targetY - this.hy) / 140,
   ];
 
   var out = this.brain.activate(inputs);
@@ -365,7 +356,7 @@ Stickman.prototype.step = function() {
 
   if (this.hx > this.maxX) this.maxX = this.hx;
 
-  let progress          = Math.max(0, this.maxX - s.STARTX) ** 1.35;
+  let progress          = Math.max(0, this.maxX - s.STARTX) ** 1.4;
   let uprightBonus      = Math.max(0, (GY - p.head.y - 10) / 80) ** 1.6 * 120;
   let velocityBonus     = Math.max(0, this.hvx) * 25;
   let smoothnessPenalty = Math.abs(this.hvx - this.prevHvx) * 8;
@@ -374,39 +365,15 @@ Stickman.prototype.step = function() {
   let altitudeBonus      = Math.max(0, 1 - altitudeError / 95) * 80;
   let jetUsePenalty      = this.jetThrottle * this.jetThrottle * 0.5;
   let energyPenalty      = torqueSum * 0.003 + jetUsePenalty;
-  let dxTarget           = Math.abs(this.hx - targetX);
-  let dyTarget           = Math.abs(this.hy - (targetY - (THIGH + SHIN + FOOT * 0.2)));
-  let approachBonus      = Math.max(0, 1 - dxTarget / 180) * 260;
-  let hoverBonus         = Math.max(0, 1 - dyTarget / 120) * 140;
   this.prevHvx = this.hvx;
 
-  this.fitness = progress * 0.9 +
-                 uprightBonus * 0.55 +
-                 velocityBonus * 0.45 +
-                 altitudeBonus * 0.4 +
-                 approachBonus +
-                 hoverBonus +
-                 this.phase * 0.08 -
-                 energyPenalty -
-                 smoothnessPenalty * 1.1;
-
-  var p3 = this.fk();
-  var leftOnTop  = p3.lFoot.x > ped.x && p3.lFoot.x < ped.x + ped.w && p3.lFoot.y > ped.y - 6 && p3.lFoot.y < ped.y + 12;
-  var rightOnTop = p3.rFoot.x > ped.x && p3.rFoot.x < ped.x + ped.w && p3.rFoot.y > ped.y - 6 && p3.rFoot.y < ped.y + 12;
-  var stableSpeed = Math.abs(this.hvx) < 0.75 && Math.abs(this.hvy) < 0.85;
-  var uprightEnough = Math.abs(this.torsoLean) < 0.45;
-  if (leftOnTop && rightOnTop && stableSpeed && uprightEnough) {
-    this.hasLanded = true;
-    var landingScore = 2200 + Math.max(0, STEP_LIMIT - this.phase) * 0.8;
-    this.fitness = Math.max(this.fitness, landingScore);
-    this.alive = false;
-    return;
-  }
+  this.fitness = progress * 2.0 + uprightBonus * 0.8 + velocityBonus + altitudeBonus + this.phase * 0.11 - energyPenalty - smoothnessPenalty * 1.1;
 
   if (!this.alive && this.phase < 400) {
     this.fitness *= Math.pow(0.4, (400 - this.phase)/180);
   }
 
+  var p3 = this.fk();
   if (p3.head.y + HEAD_R > GY + 2 || p3.shoulder.y > GY + 8 || this.hy < 10) {
     this.alive = false;
   }
@@ -517,17 +484,8 @@ Simulation.prototype.resize = function() {
   this.STARTX = Math.floor(this.W * 0.5);
 };
 
-Simulation.prototype.getPedestal = function() {
-  return {
-    x: this.STARTX + Math.floor(this.W * 1.15),
-    y: this.GY - PEDESTAL_H,
-    w: PEDESTAL_W,
-    h: PEDESTAL_H,
-  };
-};
-
 Simulation.prototype.init = function() {
-  this.neat = new Neat(20, 10, null, {
+  this.neat = new Neat(18, 10, null, {
     mutation: [
       methods.mutation.ADD_NODE, methods.mutation.ADD_CONN,
       methods.mutation.MOD_WEIGHT, methods.mutation.MOD_BIAS,
@@ -605,22 +563,6 @@ Simulation.prototype.draw = function() {
   ctx.strokeStyle = this.color+'44'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(this.camX,GY); ctx.lineTo(this.camX+W*4,GY); ctx.stroke();
 
-  var ped = this.getPedestal();
-  var targetX = ped.x + ped.w * 0.5;
-  ctx.fillStyle = '#25384dcc';
-  ctx.fillRect(ped.x, ped.y, ped.w, ped.h);
-  ctx.strokeStyle = '#7ab8ffbb';
-  ctx.lineWidth = 1.6;
-  ctx.strokeRect(ped.x, ped.y, ped.w, ped.h);
-  ctx.strokeStyle = '#ffd166';
-  ctx.beginPath();
-  ctx.moveTo(targetX, ped.y - 16);
-  ctx.lineTo(targetX, ped.y + 2);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(targetX, ped.y - 18, 5, 0, Math.PI * 2);
-  ctx.stroke();
-
   ctx.strokeStyle = '#ffffff18'; ctx.lineWidth = 1;
   for (var mx = this.STARTX; mx < this.camX+W*4; mx += 100) {
     ctx.beginPath(); ctx.moveTo(mx,GY-6); ctx.lineTo(mx,GY); ctx.stroke();
@@ -638,16 +580,14 @@ Simulation.prototype.draw = function() {
   var barW = Math.min(W, Math.max(0, champ.fitness / 500) * W);
   ctx.fillStyle = this.color+'aa'; ctx.fillRect(0, H-3, barW, 3);
 
-  var aliveCnt = 0, bestFit = -999999, landedCnt = 0;
+  var aliveCnt = 0, bestFit = -999999;
   for (var i = 0; i < this.stickmen.length; i++) {
     if (this.stickmen[i] && this.stickmen[i].alive) aliveCnt++;
     if (this.stickmen[i] && this.stickmen[i].fitness > bestFit) bestFit = this.stickmen[i].fitness;
-    if (this.stickmen[i] && this.stickmen[i].hasLanded) landedCnt++;
   }
   document.getElementById('stats'+this.idx).innerHTML =
     '<span style="color:'+this.color+'">GEN '+this.generation+'</span><br>' +
     'ALIVE '+aliveCnt+'/'+POP_SIZE+'<br>' +
-    'LANDED '+landedCnt+'/'+POP_SIZE+'<br>' +
     'BEST '+(bestFit >= 0 ? '+' : '')+Math.round(bestFit)+' score<br>' +
     'RECORD '+Math.round(this.bestEver)+' score';
 };

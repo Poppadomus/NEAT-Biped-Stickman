@@ -7,6 +7,6 @@ No dependencies or installation required; each simulator runs directly from a mo
 ## Simulators
 - `WalkingSimulator.html` — pure ragdoll gait evolution.
 - `RunningSimulator.html` — NEAT stickman with feet and hands tuned for running.
-- `JetpackSimulator.html` — NEAT stickman that learns to fly and land on a pedestal target.
+- `JetpackSimulator.html` — NEAT stickman that learns to stabilize and accelerate with a jetpack.
 
 <img width="1898" height="807" alt="image" src="https://github.com/user-attachments/assets/4b28a4d0-790e-428c-9d6b-ce1bbd796938" />
