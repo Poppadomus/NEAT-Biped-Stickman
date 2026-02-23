@@ -6,6 +6,7 @@ No dependencies or installation required; each simulator runs directly from a mo
 
 ## Simulators
 - `WalkingSimulator.html` 
-- `RunningSimulator.html` 
+<img width="1861" height="759" alt="image" src="https://github.com/user-attachments/assets/2d016ace-df83-4736-a73c-6fd36a1a200c" />
 
+- `RunningSimulator.html` 
 <img width="1898" height="807" alt="image" src="https://github.com/user-attachments/assets/4b28a4d0-790e-428c-9d6b-ce1bbd796938" />
