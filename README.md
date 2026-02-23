@@ -2,6 +2,8 @@ Probably the most intelligent stickman to grace your browser.
 
 This simulation is a neuroevolution simulation that uses the NEAT (NeuroEvolution of Augmenting Topologies) algorithm — implemented via the neataptic.js library — to evolve 24 parallel populations of stick figures learning to walk or run.
 
+No dependencies or installation required runs straight from any modern browser as a local html file.
+
 <img width="1898" height="807" alt="image" src="https://github.com/user-attachments/assets/4b28a4d0-790e-428c-9d6b-ce1bbd796938" />
 
 
