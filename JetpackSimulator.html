@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NEAT Jetpack Stickman</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/neataptic/1.4.7/neataptic.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;600&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; color: #c8f0ff; font-family: 'Share Tech Mono', monospace; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+  #header { padding: 5px 16px; border-bottom: 1px solid #1a3a4a; display: flex; align-items: center; gap: 24px; background: #0d0d18; flex-shrink: 0; }
+  #header h1 { font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 0.95rem; letter-spacing: 4px; color: #00e5ff; text-shadow: 0 0 20px #00e5ff88; }
+  .stat { display: flex; flex-direction: column; gap: 1px; }
+  .stat-label { font-size: 0.5rem; color: #456; letter-spacing: 2px; text-transform: uppercase; }
+  .stat-value { font-size: 0.85rem; color: #00e5ff; }
+  #grid { flex: 1; display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(4, 1fr); gap: 2px; background: #111; }
+  .sim-wrap { position: relative; overflow: hidden; }
+  .sim-wrap canvas { display: block; width: 100%; height: 100%; }
+  .sim-label { position: absolute; top: 3px; left: 4px; font-size: 0.42rem; letter-spacing: 1px; opacity: 0.7; pointer-events: none; }
+  .sim-stats { position: absolute; top: 3px; right: 4px; font-size: 0.42rem; text-align: right; opacity: 0.8; pointer-events: none; line-height: 1.4; }
+  #controls { position: fixed; bottom: 12px; right: 14px; display: flex; gap: 8px; z-index: 10; align-items: center; }
+  button { background: #0d1a25; border: 1px solid #00e5ff44; color: #00e5ff; font-family: 'Share Tech Mono', monospace; font-size: 0.7rem; padding: 5px 12px; cursor: pointer; letter-spacing: 1px; }
+  button:hover { background: #00e5ff22; border-color: #00e5ff; }
+  #hint { position: fixed; bottom: 14px; left: 14px; font-size: 0.6rem; color: #345; letter-spacing: 2px; z-index: 10; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>NEAT // JETPACK STICKMAN ×24</h1>
+  <div class="stat"><span class="stat-label">Speed</span><span class="stat-value" id="spd">1x</span></div>
+</div>
+<div id="grid"></div>
+<div id="hint">[ R ] reset all</div>
+<div id="controls">
+  <label style="color:#00e5ff;font-size:0.7rem;letter-spacing:1px;">SPEED
+    <input type="range" id="speedSlider" min="1" max="16" value="1" step="1"
+      style="width:100px;margin:0 8px;accent-color:#00e5ff;vertical-align:middle;"
+      oninput="updateSpeed(this.value)">
+    <span id="spd2" style="min-width:30px;display:inline-block;">1x</span>
+  </label>
+  <button onclick="resetAll()">↻ RESET</button>
+</div>
+
+<script>
+var Neat    = neataptic.Neat;
+var methods = neataptic.methods;
+
+var NUM_SIMS  = 24;
+var POP_SIZE  = 20;
+var STEP_LIMIT = 1000;
+
+var THIGH     = 22;
+var SHIN      = 20;
+var FOOT      = 12;
+var TORSO     = 30;
+var HEAD_R    = 7;
+var UPPER_ARM = 14;
+var FOREARM   = 12;
+var HAND      = 8;
+
+var GRAVITY       = 0.38;
+var FORCE_SCALE   = 0.16;
+var DAMPING_AIR   = 0.995;
+var DAMPING_GND   = 0.935;
+var MAX_TORQUE    = 0.05;
+var JOINT_SPRING  = 0.012;
+var MAX_JOINT_VEL = 0.18;
+var JET_MAX_FORCE = 0.30;
+var JET_TURN_RATE = 0.08;
+var JET_DAMPING   = 0.992;
+
+var HIP_MIN   = -0.6;   var HIP_MAX   = 1.1;
+var KNEE_MIN  =  0.05;  var KNEE_MAX  = 1.4;
+var ANKLE_MIN = -0.4;   var ANKLE_MAX = 0.6;
+var ELBOW_MIN = -1.8;   var ELBOW_MAX = 0.4;
+var WRIST_MIN = -0.8;   var WRIST_MAX = 0.8;
+
+var SIM_COLORS = [
+  '#00e5ff','#ff9900','#cc44ff','#00ff88','#ff4488','#ffee00',
+  '#00ccff','#ff6600','#88ff00','#ff00cc','#00ffcc','#ff3300',
+  '#44aaff','#ffaa00','#aa44ff','#00ffaa','#ff44aa','#aaff00',
+  '#00aaff','#ff6644','#66ff88','#ff0088','#00ffee','#ff4400'
+];
+var SIM_NAMES = 'ABCDEFGHIJKLMNOPQRSTUVWX'.split('');
+
+var grid = document.getElementById('grid');
+var fragment = document.createDocumentFragment();
+for (var i = 0; i < NUM_SIMS; i++) {
+  var wrap = document.createElement('div');
+  wrap.className = 'sim-wrap';
+  wrap.id = 'wrap'+i;
+  wrap.innerHTML =
+    '<canvas id="c'+i+'"></canvas>' +
+    '<div class="sim-label" style="color:'+SIM_COLORS[i]+'">■ SIM '+SIM_NAMES[i]+'</div>' +
+    '<div class="sim-stats" id="stats'+i+'"></div>';
+  fragment.appendChild(wrap);
+}
+grid.appendChild(fragment);
+
+function Stickman(brain, sim) {
+  this.brain = brain;
+  this.sim   = sim;
+  this.prevHvx = 0;
+  this.reset();
+}
+
+Stickman.prototype.reset = function() {
+  var s = this.sim;
+  var GY = s.GY;
+  this.alive   = true;
+  this.fitness = 0;
+  this.maxX    = s.STARTX;
+  this.phase   = 0;
+  this.prevHvx = 0;
+
+  this.hx  = s.STARTX + (Math.random()-0.5)*6;
+  this.hy  = GY - SHIN - THIGH - FOOT/2;
+  this.hvx = 0;
+  this.hvy = 0;
+
+  this.lHip   =  0.10;  this.lHipV   = 0;
+  this.lKne   =  0.18;  this.lKneV   = 0;
+  this.lAnkle =  0.00;  this.lAnkleV = 0;
+  this.rHip   = -0.10;  this.rHipV   = 0;
+  this.rKne   =  0.18;  this.rKneV   = 0;
+  this.rAnkle =  0.00;  this.rAnkleV = 0;
+
+  this.lElb   = -0.70;  this.lElbV   = 0;
+  this.lWrist = -0.30;  this.lWristV = 0;
+  this.rElb   = -0.70;  this.rElbV   = 0;
+  this.rWrist = -0.30;  this.rWristV = 0;
+
+  this.torsoLean  = 0;
+  this.torsoLeanV = 0;
+  this.jetThrottle = 0;
+  this.jetTilt = 0;
+  this.jetFlame = 0;
+
+  for (let settle = 0; settle < 40; settle++) {
+    this.hy += 0.18;
+
+    let p = this.fk();
+
+    if (p.lFoot.y > GY) {
+      let pen = p.lFoot.y - GY;
+      this.hy -= pen * 0.65;
+    }
+    if (p.rFoot.y > GY) {
+      let pen = p.rFoot.y - GY;
+      this.hy -= pen * 0.65;
+    }
+
+    this.hvx *= 0.82;
+    this.hvy *= 0.82;
+    this.lHipV   *= 0.78; this.lKneV   *= 0.78; this.lAnkleV *= 0.78; this.lElbV   *= 0.78;
+    this.rHipV   *= 0.78; this.rKneV   *= 0.78; this.rAnkleV *= 0.78; this.rElbV   *= 0.78;
+    this.torsoLeanV *= 0.78;
+  }
+
+  this.hvx = this.hvy = 0;
+};
+
+Stickman.prototype.fk = function() {
+  var hx = this.hx, hy = this.hy;
+
+  var tiltX = Math.sin(this.torsoLean) * 10;
+  var tiltY = Math.cos(this.torsoLean) * 5 - 5;
+  var sx = hx + tiltX;
+  var sy = hy - TORSO + tiltY;
+
+  var hd = { x: sx, y: sy - HEAD_R * 2.2 };
+
+  var lkx = hx - Math.sin(this.lHip) * THIGH;
+  var lky = hy + Math.cos(this.lHip) * THIGH;
+  var lSA = this.lHip + this.lKne;
+  var lax = lkx - Math.sin(lSA) * SHIN;
+  var lay = lky + Math.cos(lSA) * SHIN;
+  var lFA = lSA + this.lAnkle;
+  var lfx = lax - Math.sin(lFA) * FOOT;
+  var lfy = lay + Math.cos(lFA) * FOOT;
+
+  var rkx = hx - Math.sin(this.rHip) * THIGH;
+  var rky = hy + Math.cos(this.rHip) * THIGH;
+  var rSA = this.rHip + this.rKne;
+  var rax = rkx - Math.sin(rSA) * SHIN;
+  var ray = rky + Math.cos(rSA) * SHIN;
+  var rFA = rSA + this.rAnkle;
+  var rfx = rax - Math.sin(rFA) * FOOT;
+  var rfy = ray + Math.cos(rFA) * FOOT;
+
+  var lShouldAng = -0.5 + Math.sin(this.phase * 0.09) * 0.35;
+  var lEx = sx - Math.sin(lShouldAng) * UPPER_ARM;
+  var lEy = sy + Math.cos(lShouldAng) * UPPER_ARM;
+  var lElbAng = lShouldAng + this.lElb;
+  var lWx = lEx - Math.sin(lElbAng) * FOREARM;
+  var lWy = lEy + Math.cos(lElbAng) * FOREARM;
+  var lWristAng = lElbAng + this.lWrist;
+  var lHx = lWx - Math.sin(lWristAng) * HAND;
+  var lHy = lWy + Math.cos(lWristAng) * HAND;
+
+  var rShouldAng = 0.5 - Math.sin(this.phase * 0.09) * 0.35;
+  var rEx = sx - Math.sin(rShouldAng) * UPPER_ARM;
+  var rEy = sy + Math.cos(rShouldAng) * UPPER_ARM;
+  var rElbAng = rShouldAng + this.rElb;
+  var rWx = rEx - Math.sin(rElbAng) * FOREARM;
+  var rWy = rEy + Math.cos(rElbAng) * FOREARM;
+  var rWristAng = rElbAng + this.rWrist;
+  var rHx = rWx - Math.sin(rWristAng) * HAND;
+  var rHy = rWy + Math.cos(rWristAng) * HAND;
+
+  return {
+    hip:      { x:hx, y:hy },
+    shoulder: { x:sx, y:sy },
+    head:     hd,
+    lKnee:    { x:lkx, y:lky },
+    lAnkle:   { x:lax, y:lay },
+    lFoot:    { x:lfx, y:lfy },
+    rKnee:    { x:rkx, y:rky },
+    rAnkle:   { x:rax, y:ray },
+    rFoot:    { x:rfx, y:rfy },
+    lElbow:   { x:lEx, y:lEy },
+    lWrist:   { x:lWx, y:lWy },
+    lHand:    { x:lHx, y:lHy },
+    rElbow:   { x:rEx, y:rEy },
+    rWrist:   { x:rWx, y:rWy },
+    rHand:    { x:rHx, y:rHy },
+  };
+};
+
+Stickman.prototype.step = function() {
+  if (!this.alive) return;
+  this.phase++;
+  var s  = this.sim;
+  var GY = s.GY;
+
+  var p = this.fk();
+  var lFootOnGnd = p.lFoot.y >= GY - 2;
+  var rFootOnGnd = p.rFoot.y >= GY - 2;
+
+  var standingHeight = GY - 65;
+  var inputs = [
+    Math.max(-1.5, Math.min(1.5, (this.hy - standingHeight) / 40)),
+    this.hvx / 8,
+    this.hvy / 8,
+    this.lHip / Math.PI, this.lKne / Math.PI, this.lAnkle / Math.PI, this.lElb / Math.PI,
+    this.rHip / Math.PI, this.rKne / Math.PI, this.rAnkle / Math.PI, this.rElb / Math.PI,
+    this.torsoLean / 0.5,
+    lFootOnGnd ? 1 : 0, rFootOnGnd ? 1 : 0,
+    Math.sin(this.phase * 0.04),
+    (GY - this.hy) / 120,
+    this.jetThrottle,
+    this.jetTilt,
+  ];
+
+  var out = this.brain.activate(inputs);
+
+  var lHT = (out[0] - 0.5) * 2 * MAX_TORQUE;
+  var lKT = (out[1] - 0.5) * 2 * MAX_TORQUE;
+  var lAT = (out[2] - 0.5) * 2 * MAX_TORQUE * 0.6;
+  var lET = (out[3] - 0.5) * 2 * MAX_TORQUE * 0.8;
+
+  var rHT = (out[4] - 0.5) * 2 * MAX_TORQUE;
+  var rKT = (out[5] - 0.5) * 2 * MAX_TORQUE;
+  var rAT = (out[6] - 0.5) * 2 * MAX_TORQUE * 0.6;
+  var rET = (out[7] - 0.5) * 2 * MAX_TORQUE * 0.8;
+
+  this.jetThrottle += ((out[8] || 0.5) - this.jetThrottle) * 0.2;
+  this.jetThrottle = Math.max(0, Math.min(1, this.jetThrottle));
+  this.jetTilt += (((out[9] || 0.5) - 0.5) * 2 - this.jetTilt) * JET_TURN_RATE;
+  this.jetTilt = Math.max(-1, Math.min(1, this.jetTilt));
+
+  var torqueSum = Math.abs(lHT)+Math.abs(lKT)+Math.abs(lAT)+Math.abs(lET)+
+                  Math.abs(rHT)+Math.abs(rKT)+Math.abs(rAT)+Math.abs(rET);
+
+  this.lHipV   += lHT + ( 0.10 - this.lHip)   * JOINT_SPRING;
+  this.lKneV   += lKT + ( 0.18 - this.lKne)   * JOINT_SPRING;
+  this.lAnkleV += lAT + ( 0.00 - this.lAnkle) * JOINT_SPRING * 0.8;
+  this.lElbV   += lET + (-0.70 - this.lElb)   * JOINT_SPRING * 0.7;
+
+  this.rHipV   += rHT + (-0.10 - this.rHip)   * JOINT_SPRING;
+  this.rKneV   += rKT + ( 0.18 - this.rKne)   * JOINT_SPRING;
+  this.rAnkleV += rAT + ( 0.00 - this.rAnkle) * JOINT_SPRING * 0.8;
+  this.rElbV   += rET + (-0.70 - this.rElb)   * JOINT_SPRING * 0.7;
+
+  var armReaction = -(lET + rET) * 0.14;
+  this.torsoLeanV += armReaction;
+  this.torsoLeanV *= 0.93;
+  this.torsoLean += this.torsoLeanV;
+  this.torsoLean = Math.max(-0.5, Math.min(0.5, this.torsoLean));
+
+  this.lHipV   *= DAMPING_AIR; this.lKneV   *= DAMPING_AIR; this.lAnkleV *= DAMPING_AIR; this.lElbV   *= DAMPING_AIR;
+  this.rHipV   *= DAMPING_AIR; this.rKneV   *= DAMPING_AIR; this.rAnkleV *= DAMPING_AIR; this.rElbV   *= DAMPING_AIR;
+  this.torsoLeanV *= DAMPING_AIR;
+
+  this.lHipV   = Math.max(-MAX_JOINT_VEL, Math.min(MAX_JOINT_VEL, this.lHipV));
+  this.lKneV   = Math.max(-MAX_JOINT_VEL, Math.min(MAX_JOINT_VEL, this.lKneV));
+  this.lAnkleV = Math.max(-MAX_JOINT_VEL*0.6, Math.min(MAX_JOINT_VEL*0.6, this.lAnkleV));
+  this.lElbV   = Math.max(-MAX_JOINT_VEL*0.8, Math.min(MAX_JOINT_VEL*0.8, this.lElbV));
+  this.rHipV   = Math.max(-MAX_JOINT_VEL, Math.min(MAX_JOINT_VEL, this.rHipV));
+  this.rKneV   = Math.max(-MAX_JOINT_VEL, Math.min(MAX_JOINT_VEL, this.rKneV));
+  this.rAnkleV = Math.max(-MAX_JOINT_VEL*0.6, Math.min(MAX_JOINT_VEL*0.6, this.rAnkleV));
+  this.rElbV   = Math.max(-MAX_JOINT_VEL*0.8, Math.min(MAX_JOINT_VEL*0.8, this.rElbV));
+
+  this.lHip   += this.lHipV;   this.lKne   += this.lKneV;   this.lAnkle += this.lAnkleV;   this.lElb   += this.lElbV;
+  this.rHip   += this.rHipV;   this.rKne   += this.rKneV;   this.rAnkle += this.rAnkleV;   this.rElb   += this.rElbV;
+
+  this.lHip   = Math.max(HIP_MIN,   Math.min(HIP_MAX,   this.lHip));
+  this.rHip   = Math.max(HIP_MIN,   Math.min(HIP_MAX,   this.rHip));
+  this.lKne   = Math.max(KNEE_MIN,  Math.min(KNEE_MAX,  this.lKne));
+  this.rKne   = Math.max(KNEE_MIN,  Math.min(KNEE_MAX,  this.rKne));
+  this.lAnkle = Math.max(ANKLE_MIN, Math.min(ANKLE_MAX, this.lAnkle));
+  this.rAnkle = Math.max(ANKLE_MIN, Math.min(ANKLE_MAX, this.rAnkle));
+  this.lElb   = Math.max(ELBOW_MIN, Math.min(ELBOW_MAX, this.lElb));
+  this.rElb   = Math.max(ELBOW_MIN, Math.min(ELBOW_MAX, this.rElb));
+
+  var p2 = this.fk();
+  var fx = 0, fy = 0;
+
+  var applyFootContact = (footX, footY, hipA, kneeA, ankleA) => {
+    if (footY > GY) {
+      var pen = footY - GY;
+      var footAngle = hipA + kneeA + ankleA * 0.6;
+      fy -= pen * 1.8;
+      fx -= Math.sin(footAngle) * pen * 1.0;
+    }
+  };
+
+  applyFootContact(p2.lFoot.x, p2.lFoot.y, this.lHip, this.lKne, this.lAnkle);
+  applyFootContact(p2.rFoot.x, p2.rFoot.y, this.rHip, this.rKne, this.rAnkle);
+
+  this.hvy += GRAVITY * FORCE_SCALE;
+  this.hvy += fy  * 0.9  * FORCE_SCALE;
+  this.hvx += fx  * FORCE_SCALE;
+
+  var jetAngle = -Math.PI / 2 + this.jetTilt * 0.9 + this.torsoLean * 0.5;
+  var jetForce = this.jetThrottle * JET_MAX_FORCE;
+  this.hvx += Math.cos(jetAngle) * jetForce;
+  this.hvy += Math.sin(jetAngle) * jetForce;
+  this.jetFlame = this.jetThrottle;
+
+  var anyFootContact = p2.lFoot.y >= GY - 2 || p2.rFoot.y >= GY - 2;
+  if (anyFootContact) {
+    this.hvx *= DAMPING_GND;
+    this.hvy *= 0.65;
+  } else {
+    this.hvx *= DAMPING_AIR;
+    this.hvy *= JET_DAMPING;
+  }
+
+  this.hx += this.hvx;
+  this.hy += this.hvy;
+
+  var hipFloor = GY - THIGH - SHIN - FOOT/2 + 2;
+  if (this.hy > hipFloor) { this.hy = hipFloor; if (this.hvy > 0) this.hvy = 0; }
+  if (this.hy < 20) { this.hy = 20; this.hvy = 0; }
+
+  if (this.hx > this.maxX) this.maxX = this.hx;
+
+  let progress          = Math.max(0, this.maxX - s.STARTX) ** 1.4;
+  let uprightBonus      = Math.max(0, (GY - p.head.y - 10) / 80) ** 1.6 * 120;
+  let velocityBonus     = Math.max(0, this.hvx) * 25;
+  let smoothnessPenalty = Math.abs(this.hvx - this.prevHvx) * 8;
+  let altitudeTarget    = GY - 85;
+  let altitudeError      = Math.abs(this.hy - altitudeTarget);
+  let altitudeBonus      = Math.max(0, 1 - altitudeError / 95) * 80;
+  let jetUsePenalty      = this.jetThrottle * this.jetThrottle * 0.5;
+  let energyPenalty      = torqueSum * 0.003 + jetUsePenalty;
+  this.prevHvx = this.hvx;
+
+  this.fitness = progress * 2.0 + uprightBonus * 0.8 + velocityBonus + altitudeBonus + this.phase * 0.11 - energyPenalty - smoothnessPenalty * 1.1;
+
+  if (!this.alive && this.phase < 400) {
+    this.fitness *= Math.pow(0.4, (400 - this.phase)/180);
+  }
+
+  var p3 = this.fk();
+  if (p3.head.y + HEAD_R > GY + 2 || p3.shoulder.y > GY + 8 || this.hy < 10) {
+    this.alive = false;
+  }
+};
+
+Stickman.prototype.draw = function(ctx, isChamp, baseColor) {
+  var p   = this.fk();
+
+  let drawColor, drawColor2, lineWidth;
+
+  if (isChamp) {
+    drawColor  = baseColor;
+    drawColor2 = baseColor + '88';
+    lineWidth  = 2.5;
+  } else {
+    drawColor  = baseColor + '55';
+    drawColor2 = baseColor + '28';
+    lineWidth  = 1.4;
+  }
+
+  ctx.save();
+  ctx.globalAlpha = isChamp ? 1.0 : 0.45;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+  if (isChamp) {
+    ctx.shadowColor = baseColor;
+    ctx.shadowBlur  = 10;
+  }
+
+  function seg(a, b, c) {
+    ctx.strokeStyle = c || drawColor;
+    ctx.lineWidth = lineWidth;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+
+  seg(p.hip,      p.rKnee,  drawColor2);
+  seg(p.rKnee,    p.rAnkle, drawColor2);
+  seg(p.rAnkle,   p.rFoot,  drawColor2);
+  seg(p.shoulder, p.rElbow, drawColor2);
+  seg(p.rElbow,   p.rWrist, drawColor2);
+  seg(p.rWrist,   p.rHand,  drawColor2);
+
+  seg(p.hip,      p.shoulder);
+
+  var packX = (p.shoulder.x + p.hip.x) * 0.5;
+  var packY = (p.shoulder.y + p.hip.y) * 0.5;
+  ctx.strokeStyle = drawColor;
+  ctx.lineWidth = lineWidth * 0.9;
+  ctx.strokeRect(packX - 4, packY - 7, 8, 14);
+
+  if (this.jetFlame > 0.04) {
+    var flameLen = 10 + this.jetFlame * 16;
+    var flameAng = Math.PI / 2 + this.jetTilt * 0.9 + this.torsoLean * 0.5;
+    var fx2 = packX + Math.cos(flameAng) * flameLen;
+    var fy2 = packY + Math.sin(flameAng) * flameLen;
+    var grad = ctx.createLinearGradient(packX, packY, fx2, fy2);
+    grad.addColorStop(0, "#ffdd66cc");
+    grad.addColorStop(1, "#ff550022");
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = lineWidth * 1.4;
+    ctx.beginPath();
+    ctx.moveTo(packX, packY + 5);
+    ctx.lineTo(fx2, fy2);
+    ctx.stroke();
+  }
+  seg(p.hip,      p.lKnee);
+  seg(p.lKnee,    p.lAnkle);
+  seg(p.lAnkle,   p.lFoot);
+  seg(p.shoulder, p.lElbow);
+  seg(p.lElbow,   p.lWrist);
+  seg(p.lWrist,   p.lHand);
+
+  ctx.strokeStyle = drawColor;
+  ctx.lineWidth = lineWidth;
+  ctx.beginPath();
+  ctx.arc(p.head.x, p.head.y, HEAD_R, 0, Math.PI*2);
+  ctx.stroke();
+
+  if (isChamp) {
+    ctx.fillStyle = baseColor;
+    ctx.shadowBlur = 0;
+    [p.hip, p.lKnee, p.rKnee, p.lAnkle, p.rAnkle, p.lElbow, p.rElbow].forEach(j => {
+      ctx.beginPath();
+      ctx.arc(j.x, j.y, 2, 0, Math.PI*2);
+      ctx.fill();
+    });
+  }
+
+  ctx.restore();
+};
+
+function Simulation(idx) {
+  this.idx    = idx;
+  this.color  = SIM_COLORS[idx];
+  this.canvas = document.getElementById('c'+idx);
+  this.ctx    = this.canvas.getContext('2d');
+  this.W = this.H = this.GY = this.STARTX = this.camX = 0;
+  this.generation = 0; this.simStep = 0; this.bestEver = 0;
+  this.stickmen = []; this.neat = null;
+  this.resize();
+}
+
+Simulation.prototype.resize = function() {
+  var wrap = this.canvas.parentElement;
+  this.W = this.canvas.width  = wrap.offsetWidth;
+  this.H = this.canvas.height = wrap.offsetHeight;
+  this.GY     = Math.floor(this.H * 0.78);
+  this.STARTX = Math.floor(this.W * 0.5);
+};
+
+Simulation.prototype.init = function() {
+  this.neat = new Neat(18, 10, null, {
+    mutation: [
+      methods.mutation.ADD_NODE, methods.mutation.ADD_CONN,
+      methods.mutation.MOD_WEIGHT, methods.mutation.MOD_BIAS,
+      methods.mutation.MOD_ACTIVATION,
+      methods.mutation.SUB_CONN, methods.mutation.SUB_NODE,
+    ],
+    popsize:        POP_SIZE,
+    mutationRate:   0.22,
+    mutationAmount: 12,
+    elitism:        5,
+  });
+  this.generation = 0; this.bestEver = 0;
+  this.camX = this.STARTX - this.W * 0.5;
+  this.spawnGeneration();
+};
+
+Simulation.prototype.spawnGeneration = function() {
+  this.generation++; this.simStep = 0;
+  this.stickmen = this.neat.population.map(g => new Stickman(g, this));
+};
+
+Simulation.prototype.evolve = function() {
+  for (var i = 0; i < this.neat.population.length; i++)
+    this.neat.population[i].score = this.stickmen[i] ? this.stickmen[i].fitness : 0;
+  this.bestEver = Math.max.apply(null, [this.bestEver].concat(
+    this.stickmen.map(s => s ? s.fitness : 0)
+  ));
+  this.neat.sort(); this.neat.evolve();
+  this.spawnGeneration();
+};
+
+Simulation.prototype.getChamp = function() {
+  var best = this.stickmen[0];
+  for (var i = 1; i < this.stickmen.length; i++)
+    if (this.stickmen[i] && this.stickmen[i].fitness >= best.fitness) best = this.stickmen[i];
+  return best;
+};
+
+Simulation.prototype.update = function() {
+  var alive = 0;
+  for (var i = 0; i < this.stickmen.length; i++) {
+    this.stickmen[i].step();
+    if (this.stickmen[i].alive) alive++;
+  }
+  this.simStep++;
+  if (this.simStep >= STEP_LIMIT || alive < POP_SIZE * 0.15) this.evolve();
+};
+
+Simulation.prototype.draw = function() {
+  var ctx = this.ctx, W = this.W, H = this.H, GY = this.GY;
+  ctx.clearRect(0, 0, W, H);
+
+  var bg = ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#060610'); bg.addColorStop(1,'#08121e');
+  ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
+
+  var champ = this.getChamp();
+  this.camX = champ.hx - W * 0.5;
+
+  ctx.save();
+  ctx.translate(-this.camX, 0);
+
+  ctx.strokeStyle = '#0c1820'; ctx.lineWidth = 1;
+  var gx0 = Math.floor(this.camX/50)*50;
+  for (var gx = gx0; gx < this.camX+W+50; gx += 50) {
+    ctx.beginPath(); ctx.moveTo(gx,0); ctx.lineTo(gx,H); ctx.stroke();
+  }
+  for (var gy2 = 0; gy2 < H; gy2 += 50) {
+    ctx.beginPath(); ctx.moveTo(this.camX,gy2); ctx.lineTo(this.camX+W,gy2); ctx.stroke();
+  }
+
+  var gr = ctx.createLinearGradient(0,GY,0,H);
+  gr.addColorStop(0,'#0e2535'); gr.addColorStop(1,'#05101a');
+  ctx.fillStyle = gr; ctx.fillRect(this.camX, GY, this.camX + W*4, H-GY);
+  ctx.strokeStyle = this.color+'44'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(this.camX,GY); ctx.lineTo(this.camX+W*4,GY); ctx.stroke();
+
+  ctx.strokeStyle = '#ffffff18'; ctx.lineWidth = 1;
+  for (var mx = this.STARTX; mx < this.camX+W*4; mx += 100) {
+    ctx.beginPath(); ctx.moveTo(mx,GY-6); ctx.lineTo(mx,GY); ctx.stroke();
+  }
+
+  for (var i = 0; i < this.stickmen.length; i++)
+    if (this.stickmen[i] !== champ)
+      this.stickmen[i].draw(ctx, false, this.color);
+
+  champ.draw(ctx, true, this.color);
+
+  ctx.restore();
+
+  ctx.fillStyle = '#0d1a25'; ctx.fillRect(0, H-3, W, 3);
+  var barW = Math.min(W, Math.max(0, champ.fitness / 500) * W);
+  ctx.fillStyle = this.color+'aa'; ctx.fillRect(0, H-3, barW, 3);
+
+  var aliveCnt = 0, bestFit = -999999;
+  for (var i = 0; i < this.stickmen.length; i++) {
+    if (this.stickmen[i] && this.stickmen[i].alive) aliveCnt++;
+    if (this.stickmen[i] && this.stickmen[i].fitness > bestFit) bestFit = this.stickmen[i].fitness;
+  }
+  document.getElementById('stats'+this.idx).innerHTML =
+    '<span style="color:'+this.color+'">GEN '+this.generation+'</span><br>' +
+    'ALIVE '+aliveCnt+'/'+POP_SIZE+'<br>' +
+    'BEST '+(bestFit >= 0 ? '+' : '')+Math.round(bestFit)+' score<br>' +
+    'RECORD '+Math.round(this.bestEver)+' score';
+};
+
+var sims = [], frameCount = 0, simSpeed = 1, animId;
+
+function updateSpeed(v) {
+  simSpeed = parseInt(v);
+  document.getElementById('spd').textContent  = simSpeed+'x';
+  document.getElementById('spd2').textContent = simSpeed+'x';
+}
+
+function initAll() {
+  sims = [];
+  for (var i = 0; i < NUM_SIMS; i++) {
+    var s = new Simulation(i); s.init(); sims.push(s);
+  }
+}
+
+function simLoop() {
+  animId = requestAnimationFrame(simLoop);
+  frameCount++;
+  var stepsThisFrame = (simSpeed <= 1) ? (frameCount % 2 === 0 ? 1 : 0) : simSpeed;
+  for (var t = 0; t < stepsThisFrame; t++) {
+    for (var i = 0; i < sims.length; i++) sims[i].update();
+  }
+  for (var i = 0; i < sims.length; i++) sims[i].draw();
+}
+
+function resetAll() {
+  cancelAnimationFrame(animId);
+  document.getElementById('speedSlider').value = 1;
+  updateSpeed(1);
+  initAll(); simLoop();
+}
+
+window.addEventListener('resize', function() { for (var i=0;i<sims.length;i++) sims[i].resize(); });
+window.addEventListener('keydown', function(e) { if (e.code==='KeyR') resetAll(); });
+window.addEventListener('load', function() {
+  try {
+    if (typeof neataptic === 'undefined') throw new Error('neataptic not loaded');
+    initAll(); simLoop();
+  } catch(e) {
+    document.body.innerHTML += '<div style="color:#f44;padding:20px">Error: '+e.message+'</div>';
+    console.error(e);
+  }
+});
+</script>
+</body>
+</html>
